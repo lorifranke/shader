@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Shader-Test</title>
+  <meta content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" name="viewport">
+  <link href="base.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<!--  <script type="text/javascript" src="https://unpkg.com/@babel/polyfill@7.0.0/dist/polyfill.js"></script>-->
+<!--  <script type="text/javascript" src="https://unpkg.com/vtk.js@8.3.1"></script>-->
+<script src="./libs/nifi-reader-min.js" type="text/javascript"></script>
+
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.118/build/three.module.js';
+  // import * as THREE from '../build/three.module.js';
+  import Stats from './libs/stats.module.js';
+  // import fragment from "./shader/fragment.glsl";
+  // import vertex from "./shader/vertex.glsl";
+  // import NiftiReader from './libs/nifi-reader-min.js';
+  import {TrackballControls} from './controls/TrackballControls.js';
+  import {VTKLoader} from './loaders/VTKLoader.js';
+  import { OrbitControls } from 'https://unpkg.com/three@0.120.1/examples/jsm/controls/OrbitControls.js'
+  import { GLTFLoader } from 'https://unpkg.com/three@0.120.1/examples/jsm/loaders/GLTFLoader.js'
+
+
+  let container, stats;
+  let camera, controls, scene, renderer;
+
+  init();
+  animate();
+
+  function init() {
+
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1e10);
+    camera.position.z = 0.2;
+    scene = new THREE.Scene();
+    scene.add(camera);
+
+    // // light
+    //
+    // const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x000000, 1 );
+    // scene.add( hemiLight );
+    //
+    // const dirLight = new THREE.DirectionalLight( 0xffffff, 0.5 );
+    // dirLight.position.set( 2, 2, 2 );
+    // scene.add( dirLight );
+
+    // create shader material
+
+    let material = new THREE.ShaderMaterial({
+      extensions: {
+        derivatives: "#extension GL_OES_standard_derivatives : enable"
+      },
+      side: THREE.DoubleSide,
+      uniforms: {
+        time: {value: 0},
+        resolution: {value: new THREE.Vector4()},
+      },
+      vertexShader: vertex(),
+      fragmentShader: fragment()
+    });
+
+// vertex shader here
+    function vertex() {
+      return `
+      uniform float time;
+      varying vec2 vScreenSpace;
+      varying vec2 vUv;
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      float PI = 3.141592653589793238;
+      void main() {
+        vUv = uv;
+        vPosition = position;
+        vNormal = normal;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vScreenSpace = gl_Position.xy/gl_Position.w;
+      }
+   `
+    }
+
+    // fragment shader here
+
+    function fragment() {
+      return `
+      uniform float time;
+      uniform float progress;
+      uniform sampler2D texture1;
+      uniform vec4 resolution;
+      varying vec2 vScreenSpace;
+      varying vec3 vNormal;
+      varying vec2 vUv;
+      varying vec3 vPosition;
+      float PI = 3.141592653589793238;
+
+      float threshold(float edge0, float edge1, float x) {
+         return clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        }
+
+        float hash(vec3 p) {
+        p = fract(p * 0.3183099 + .1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
+
+        float noise(in vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+
+        return mix(mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y), mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+        }
+
+        float rand(float n){return fract(sin(n) * 43758.5453123);}
+
+        float noise(float p) {
+        float fl = floor(p);
+        float fc = fract(p);
+        return mix(rand(fl), rand(fl + 1.0), fc);
+        }
+
+      void main() {
+        float light = dot(vNormal, normalize(vec3(1.)));
+
+
+        // strokes
+        float stroke = cos((vScreenSpace.x - vScreenSpace.y )*1000.);
+        float smallnoise = noise(500.*vec3(vScreenSpace,1.));
+        float bignoise = noise(10.*vec3(vScreenSpace,1.));
+
+        stroke += (smallnoise*2. -1.) + (bignoise*2. -1.);
+
+        stroke = 1. - smoothstep(2.*light-2.,2.*light+2., stroke);
+
+        gl_FragColor = vec4(vScreenSpace,0.,1.);
+        gl_FragColor = vec4(vNormal,1.);
+        gl_FragColor = vec4(vec3(light),1.);
+        gl_FragColor = vec4(vec3(stroke),1.);
+        // gl_FragColor = vec4(vec3(smallnoise),1.);
+        // gl_FragColor = vec4(vec3(noise(100.*vec3(vScreenSpace,1.))),1.);
+        }
+    `
+    }
+
+    const loader = new VTKLoader();
+    loader.load("./resources/rh.vtk", function (geometry) {
+      geometry.center();
+      geometry.computeVertexNormals();
+      // const material = new THREE.MeshLambertMaterial( { color: 0xffffff } );
+      const mesh = new THREE.Mesh(geometry, material);
+      // mesh.position.set( - 0.075, 0.005, 0 );
+      mesh.scale.multiplyScalar(0.2);
+      scene.add(mesh);
+
+    });
+
+    // const data = "./resources/E_vec.nii"
+    // this._arrayBuffer = data.buffer;
+    // if (NiftiReader.isNIFTI(this._arrayBuffer)) {
+    //   this._dataSet = NiftiReader.readHeader(this._arrayBuffer);
+    //   this._niftiImage = NiftiReader.readImage(this._dataSet, this._arrayBuffer);
+    // } else {
+    //   const error = new Error('parsers.nifti could not parse the file');
+    //   throw error;
+    // }
+
+    // function readNIFTI(buf) {
+    //   var header = NiftiReader.readHeader(buf);
+    //   var logger = document.getElementById('results');
+    //   logger.innerText = header.toFormattedString();
+    // }
+    //
+    // function readFile(file) {
+    //   var blob = makeSlice(file, 0, file.size);
+    //   var reader = new FileReader();
+    //   reader.onloadend = function (evt) {
+    //     if (evt.target.readyState === FileReader.DONE) {
+    //       readNIFTI(file.name, evt.target.result);
+    //     }
+    //   };
+    //   reader.readAsArrayBuffer(blob);
+    // }
+    // readFile("./resources/E_vec.nii");
+
+    // renderer
+
+    renderer = new THREE.WebGLRenderer();
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.physicallyCorrectLights = true;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.setClearColor(0xeeeeee, 1);
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    container.appendChild(renderer.domElement);
+
+    // controls
+    controls = new TrackballControls(camera, renderer.domElement);
+    controls.minDistance = 50;
+    controls.maxDistance = 500;
+    controls.rotateSpeed = 20;
+    stats = new Stats();
+    container.appendChild(stats.dom);
+    //
+    window.addEventListener('resize', onWindowResize);
+  }
+
+  function onWindowResize() {
+
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    controls.handleResize();
+
+  }
+
+  function animate() {
+
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+    stats.update();
+
+  }
+
+</script>
+</body>
+</html>

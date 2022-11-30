@@ -6,4 +6,6 @@ The scene is build with the library the Three.js (https://threejs.org/) while th
 
 ## Demo ##
 
+![shader](https://github.com/lorifranke/shader/blob/main/brainshader.gif)
+
 Check it out here: https://lorifranke.github.io/shader/
